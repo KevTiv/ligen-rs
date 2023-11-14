@@ -11,8 +11,7 @@ pub enum ManagersArgs {
     YARN,
     PNPM,
     IOS,
-    ANDROID,
-    All,
+    ANDROID
 }
 
 #[derive(Parser)]
@@ -31,7 +30,7 @@ pub struct ParsedArgs {
     pub output: PathBuf,
 }
 
-pub fn parse_cli_args() -> ParsedArgs {
+pub fn cli() -> ParsedArgs {
     let Cli { manager, path, output } = Cli::parse();
     let cwd = env::current_dir().unwrap();
     let working_directory = format_file_path!(cwd.join(path));

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::ManagersArgs;
 
@@ -7,13 +7,52 @@ pub struct ParsedDependencies {
     output_path: PathBuf,
 }
 
-const DEPENDENCY_FILE_PATH: [(ManagersArgs, &str); 5] = [
+const NODE_DEPENDENCY_FILE_PATH: [(ManagersArgs, &str); 3] = [
     (ManagersArgs::NPM, "package-lock.json"),
     (ManagersArgs::YARN, "yarn.lock"),
-    (ManagersArgs::PNPM, "pnpm-lock.yaml"),
+    (ManagersArgs::PNPM, "pnpm-lock.yaml")
+];
+
+const NATIVE_DEPENDENCY_FILE_PATH: [(ManagersArgs, &str); 2] = [
     (ManagersArgs::IOS, "ios/Podfile.lock"),
     (ManagersArgs::ANDROID, "android/build.gradle")
 ];
+struct DependencyFile {
+    npm: String,
+    yarn: String,
+    pnpm: String,
+    ios: String,
+    android: String,
+}
+
+impl Default for DependencyFile {
+    fn default() -> Self {
+        DependencyFile {
+            npm: "package-lock.json".to_string(),
+            yarn: "yarn.lock".to_string(),
+            pnpm: "pnpm-lock.yaml".to_string(),
+            ios: "ios/Podfile.lock".to_string(),
+            android: "android/build.gradle".to_string(),
+        }
+    }
+}
+
+struct HandleFile {
+    file_exists_in_directory: (String, PathBuf),
+    update_lock_file_path: (Vec<PathBuf>, PathBuf, PathBuf)
+}
+
+impl HandleFile for HandleFilesPath {
+    fn file_exists_in_directory(file_path: &str, root_directory: PathBuf) -> bool {
+        let file_path = root_directory.join(file_path);
+        file_path.exists()
+    }
+    fn update_lock_file_path(mut lockfilepaths: Vec<PathBuf>, lockfilepath: &str, root_directory: PathBuf){
+        Ok(if file_exists_in_directory(lockfilepath, root_directory.clone()) {
+            lockfilepaths.push(lockfilepath.parse().unwrap())
+        }).expect("Error occurred")
+    }
+}
 
 
 pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: PathBuf) -> bool {
@@ -23,50 +62,48 @@ pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: PathBuf)
 }
 
 pub(crate) fn handle_dependencies_files(manager: ManagersArgs, root_directory: PathBuf) -> Vec<PathBuf> {
-    let mut lockfiles_paths: Vec<PathBuf> = vec![];
+    let mut lockfilepaths: Vec<PathBuf> = vec![];
 
     match manager {
         ManagersArgs::NPM => {
-            match file_exists_in_directory(DEPENDENCY_FILE_PATH[0].1, root_directory.clone()) {
-                true => lockfiles_paths.push(DEPENDENCY_FILE_PATH[0].1.parse().unwrap()),
-                _ => println!("{:?} not found", DEPENDENCY_FILE_PATH[0].1)
-            };
+            HandleFile::updateLockFilePath(
+                lockfilepaths,
+                NODE_DEPENDENCY_FILE_PATH[0].1,
+                root_directory.clone()
+            )
         }
         ManagersArgs::YARN => {
-            match file_exists_in_directory(DEPENDENCY_FILE_PATH[1].1, root_directory.clone()) {
-                true => lockfiles_paths.push(DEPENDENCY_FILE_PATH[1].1.parse().unwrap()),
-                _ => println!("{:?} not found", DEPENDENCY_FILE_PATH[1].1)
-            };
+            HandleFilesPath::updateLockFilePath(
+                lockfilepaths,
+                NODE_DEPENDENCY_FILE_PATH[1].1,
+                root_directory.clone()
+            )
         }
         ManagersArgs::PNPM => {
-            match file_exists_in_directory(DEPENDENCY_FILE_PATH[2].1, root_directory.clone()) {
-                true => lockfiles_paths.push(DEPENDENCY_FILE_PATH[2].1.parse().unwrap()),
-                _ => println!("{:?} not found", DEPENDENCY_FILE_PATH[2].1)
-            };
+            HandleFilesPath::updateLockFilePath(
+                lockfilepaths,
+                NODE_DEPENDENCY_FILE_PATH[2].1,
+                root_directory.clone()
+            )
         }
         ManagersArgs::IOS => {
-            match file_exists_in_directory(DEPENDENCY_FILE_PATH[3].1, root_directory.clone()) {
-                true => lockfiles_paths.push(DEPENDENCY_FILE_PATH[3].1.parse().unwrap()),
-                _ => println!("{:?} not found", DEPENDENCY_FILE_PATH[3].1)
-            };
+            HandleFilesPath::updateLockFilePath(
+                lockfilepaths,
+                NODE_DEPENDENCY_FILE_PATH[3].1,
+                root_directory.clone()
+            )
         }
         ManagersArgs::ANDROID => {
-            match file_exists_in_directory(DEPENDENCY_FILE_PATH[4].1, root_directory.clone()) {
-                true => lockfiles_paths.push(DEPENDENCY_FILE_PATH[4].1.parse().unwrap()),
-                _ => println!("{:?} not found", DEPENDENCY_FILE_PATH[4].1)
-            };
-        }
-        ManagersArgs::All => {
-            for (.., filepath) in DEPENDENCY_FILE_PATH {
-                match file_exists_in_directory(filepath, root_directory.clone()) {
-                    true => lockfiles_paths.push(filepath.parse().unwrap()),
-                    _ => println!("{:?} not found", filepath)
-                };
-            }
+            HandleFilesPath::updateLockFilePath(
+                lockfilepaths,
+                NODE_DEPENDENCY_FILE_PATH[4].1,
+                root_directory.clone()
+            )
         }
     }
 
-    lockfiles_paths
+    Ok::<Vec<PathBuf>, String>(lockfilepaths)
+        .expect("Error: Something went wrong while locating dependencies files.")
 }
 
 fn parse_package_lock(file_path: &str) {}
