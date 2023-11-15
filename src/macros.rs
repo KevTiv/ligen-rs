@@ -12,12 +12,3 @@ macro_rules! format_file_path {
             })
     }};
 }
-
-#[macro_export]
-macro_rules! check_and_push_lockfile {
-    ($file:expr, $root_directory:expr, $lockfile_paths:expr) => {
-        if file_exists_in_directory($file, $root_directory.clone()) {
-            $lockfile_paths.push($file.parse().unwrap());
-        }
-    };
-}
