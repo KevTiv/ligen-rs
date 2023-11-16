@@ -14,8 +14,8 @@ fn main() {
     for lockfile in dependency_lockfiles.iter() {
         match lockfile.to_str() {
             Some(path) => parse_lock_file(manager, path),
-            _ => Result::from(Ok(println!("No file found")))
-        }.expect("TODO: panic message");
+            _ => println!("Something went wrong")
+        };
     }
     // for lockfilePath in &dependency_lockfiles {
     //     let file_path = lockfilePath;

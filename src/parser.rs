@@ -1,21 +1,36 @@
+use std::collections::HashMap;
+use std::fmt::format;
 use std::io;
 use std::fs::File;
-use std::io::{BufReader, Error, Read};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
-use serde_json::{json, Value};
+use serde_derive::{Deserialize, Serialize};
+
 
 use crate::cli::ManagersArgs;
 use crate::format_file_path;
 
-pub struct ParsedDependencies {
-    file_paths: PathBuf,
-    output_path: PathBuf,
+#[derive(Serialize, Deserialize, Debug)]
+struct PackageLockJson {
+    name: Option<String>,
+    version: Option<String>,
+    lockfile_version: Option<u32>,
+    requires: Option<bool>,
+    packages: Option<HashMap<String, Package>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Package {
+    name: Option<String>,
+    version: Option<String>,
+    dependencies: Option<HashMap<String, String>>,
+    dev_dependencies: Option<HashMap<String, String>>,
 }
 
 struct DependencyFile;
 
 trait Parser {
-    fn parse_package_lock(lockfile_path: &str) -> io::Result<()>;
+    fn parse_package_lock(lockfile_path: &str) -> Result<PackageLockJson, Box<dyn std::error::Error>>;
     fn parse_yarn_lock(lockfile_path: &str) -> io::Result<()>;
 
     fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()>;
@@ -59,30 +74,35 @@ impl FileParser for DependencyFile {
 }
 
 impl Parser for DependencyFile {
-    fn parse_package_lock(lockfile_path: &str) -> io::Result<()> {
-        let raw_content = json!(<DependencyFile as FileParser>::read_file(lockfile_path));
-        let content = (raw_content.ok());
-        Ok(println!("content: {:?}", content))
-        // buf_reader.read_to_string(&mut contents)?;
+    fn parse_package_lock(lockfile_path: &str) -> Result<PackageLockJson, Box<dyn std::error::Error>> {
+        let file_content = DependencyFile::read_file(lockfile_path).unwrap();
+
+        match serde_json::from_str(&file_content) {
+            Ok(package_lock_json) => {
+                println!("Finished parsing! {:?}", package_lock_json);
+                Ok(package_lock_json)
+            },
+            Err(e) => Err(Box::new(e))
+        }
     }
     fn parse_yarn_lock(lockfile_path: &str) -> io::Result<()> {
         let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here parse_package_lock: {:?} ", lockfile_path)))
+        Result::from(Ok(println!("Here 2 parse_package_lock: {:?} ", lockfile_path)))
     }
 
     fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()> {
         let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here parse_package_lock: {:?} ", content)))
+        Result::from(Ok(println!("Here 3 parse_package_lock: {:?} ", content)))
     }
 
     fn parse_podlock(lockfile_path: &str) -> io::Result<()> {
         let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here parse_package_lock: {:?} ", content)))
+        Result::from(Ok(println!("Here 4 parse_package_lock: {:?} ", content)))
     }
 
     fn parse_settings_graddle(lockfile_path: &str) -> io::Result<()> {
         let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here parse_package_lock: {:?} ", content)))
+        Result::from(Ok(println!("Here 5 parse_package_lock: {:?} ", content)))
     }
 }
 
@@ -104,12 +124,17 @@ pub(crate) fn handle_dependencies_files(manager: ManagersArgs, root_directory: P
     lockfilepaths
 }
 
-pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) -> io::Result<()> {
-    match manager {
-        ManagersArgs::NPM => {DependencyFile::parse_package_lock(lockfile_path)},
+pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) {
+    let parsed_lock_file = match manager {
+        ManagersArgs::NPM => {
+            let package_lock = DependencyFile::parse_package_lock(lockfile_path);
+            let mut file = File::create("output.txt");
+            let _ = file.expect("Error with file").write_all(format!("{:?}", package_lock).as_ref());
+            Ok(())
+        },
         ManagersArgs::YARN => DependencyFile::parse_yarn_lock(lockfile_path),
         ManagersArgs::PNPM => DependencyFile::parse_pnpm_lock(lockfile_path),
         ManagersArgs::IOS => DependencyFile::parse_podlock(lockfile_path),
         ManagersArgs::ANDROID => DependencyFile::parse_settings_graddle(lockfile_path),
-    }
+    };
 }
