@@ -1,12 +1,13 @@
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 
 use crate::cli::ManagersArgs;
 use crate::format_file_path;
+use crate::write::write_vec_to_file;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PackageLockJson {
@@ -29,7 +30,7 @@ struct DependencyFile;
 
 trait Parser {
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
-    fn parse_yarn_lock(lockfile_path: &str) -> io::Result<()>;
+    fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
     fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()>;
 
@@ -97,12 +98,46 @@ impl Parser for DependencyFile {
             Err(error) => Err(Box::new(error)),
         }
     }
-    fn parse_yarn_lock(lockfile_path: &str) -> io::Result<()> {
-        let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!(
-            "Here 2 parse_package_lock: {:?} ",
-            lockfile_path
-        )))
+    fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let yarn_lock = <DependencyFile as FileParser>::read_file(lockfile_path);
+
+
+        match yarn_lock {
+            Ok(yarn_lock) => {
+                let mut dependencies = Vec::new();
+
+                let mut seen = std::collections::HashSet::new();
+
+                for line in yarn_lock.lines() {
+                    if let Some(colon_index) = line.find(':') {
+                        let package_identifiers = line[..colon_index].split(',');
+
+                        for package_identifier in package_identifiers {
+                            let trimmed_identifier = package_identifier.trim();
+
+                            let library_name = if trimmed_identifier.starts_with('@') {
+                                // Scoped package
+                                if let Some(slash_index) = trimmed_identifier.find('/') {
+                                    &trimmed_identifier[..trimmed_identifier[slash_index..].find('@').map_or(trimmed_identifier.len(), |idx_to_trim| slash_index + idx_to_trim)]
+                                } else {
+                                    continue; // Invalid format, skip
+                                }
+                            } else {
+                                // Regular package
+                                &trimmed_identifier[..trimmed_identifier.find('@').unwrap_or(trimmed_identifier.len())]
+                            };
+
+                            if library_name.to_string().len() != 0 && seen.insert(library_name.to_string()) {
+                                dependencies.push(format!("node_modules/{library_name}"));
+                            }
+                        }
+                    }
+                }
+
+                Ok(dependencies)
+            }
+            Err(error) => Err(Box::new(error)),
+        }
     }
 
     fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()> {
@@ -144,7 +179,7 @@ pub(crate) fn handle_dependencies_files(
     lockfilepaths
 }
 
-pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) -> Vec<String> {
+pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) {
     let mut parsed_dependencies: Vec<String> = Vec::new();
     let _ = match manager {
         ManagersArgs::NPM => {
@@ -158,12 +193,15 @@ pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) -> Vec
                         .write_all(format!("{:?}", error).as_ref());
                 }
             }
+            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
             Ok(())
         }
-        ManagersArgs::YARN => DependencyFile::parse_yarn_lock(lockfile_path),
+        ManagersArgs::YARN => {
+            let dependencies = DependencyFile::parse_yarn_lock(lockfile_path);
+            Ok(())
+        },
         ManagersArgs::PNPM => DependencyFile::parse_pnpm_lock(lockfile_path),
         ManagersArgs::IOS => DependencyFile::parse_podlock(lockfile_path),
         ManagersArgs::ANDROID => DependencyFile::parse_settings_graddle(lockfile_path),
     };
-    parsed_dependencies
 }

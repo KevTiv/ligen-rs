@@ -14,7 +14,7 @@ fn main() {
     for lockfile in dependency_lockfiles.iter() {
         match lockfile.to_str() {
             Some(path) => parse_lock_file(manager, path),
-            _ => println!("Something went wrong")
+            _ => eprint!("Something went wrong")
         };
     }
     // for lockfilePath in &dependency_lockfiles {
