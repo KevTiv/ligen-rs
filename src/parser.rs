@@ -1,9 +1,10 @@
-use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io;
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
+
+use serde_derive::{Deserialize, Serialize};
 
 use crate::cli::ManagersArgs;
 use crate::format_file_path;
@@ -26,13 +27,26 @@ struct Package {
     dev_dependencies: Option<HashMap<String, String>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PnpmLockFile {
+    dependencies: HashMap<String, Option<PnpmLockSpecifier>>,
+    devDependencies: HashMap<String, Option<PnpmLockSpecifier>>,
+    packages: HashMap<String, Option<PnpmLockSpecifier>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PnpmLockSpecifier {
+    specifier: Option<String>,
+    version: Option<String>,
+}
+
 struct DependencyFile;
 
 trait Parser {
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
     fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
-    fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()>;
+    fn parse_pnpm_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
     fn parse_podlock(lockfile_path: &str) -> io::Result<()>;
 
@@ -47,6 +61,28 @@ trait FileParser {
         lockfilepath: &str,
         root_directory: &PathBuf,
     );
+}
+
+fn extract_library_name(key: &str) -> String {
+    // Split the key by '/'
+    let parts: Vec<&str> = key.split('/').collect();
+
+    // The package name is usually the last part for non-scoped packages,
+    // or the last two parts for scoped packages.
+    match parts.as_slice() {
+        // Scoped package (e.g., "/@babel/code-frame/7.10.4")
+        [_, scope, rest, ..] if scope.starts_with('@') => {
+            let name = rest.split('@').next().unwrap_or("");
+            format!("{}/{}", scope, name)
+        }
+        // Non-scoped package (e.g., "/lodash/4.17.15")
+        [_, rest, ..] => {
+            let name = rest.split('@').next().unwrap_or("");
+            name.to_string()
+        }
+        // Other cases (e.g., malformed or unexpected format)
+        _ => String::new(),
+    }
 }
 
 pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: PathBuf) -> bool {
@@ -127,7 +163,7 @@ impl Parser for DependencyFile {
                                 &trimmed_identifier[..trimmed_identifier.find('@').unwrap_or(trimmed_identifier.len())]
                             };
 
-                            if library_name.to_string().len() != 0 && seen.insert(library_name.to_string()) {
+                            if library_name.to_string() != "" && seen.insert(library_name.to_string()) {
                                 dependencies.push(format!("node_modules/{library_name}"));
                             }
                         }
@@ -140,9 +176,29 @@ impl Parser for DependencyFile {
         }
     }
 
-    fn parse_pnpm_lock(lockfile_path: &str) -> io::Result<()> {
-        let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here 3 parse_package_lock: {:?} ", content)))
+    fn parse_pnpm_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let pnpm_lock = <DependencyFile as FileParser>::read_file(lockfile_path);
+        match pnpm_lock {
+            Ok(pnpm_lock) => {
+                let pnpm_lock: PnpmLockFile = serde_yaml::from_str(&pnpm_lock)?;
+                let mut dependencies = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+
+                let pnpm_lock_dependencies = pnpm_lock.dependencies.keys();
+                let pnpm_lock_dev_dependencies = pnpm_lock.devDependencies.keys();
+                let pnpm_lock_packages = pnpm_lock.packages.keys();
+
+                for package in pnpm_lock_dependencies.chain(pnpm_lock_dev_dependencies).chain(pnpm_lock_packages) {
+                    if let formatted_name = extract_library_name(package) {
+                        if seen.insert(formatted_name.clone()) {
+                            dependencies.push(format!("node_modules/{}", formatted_name));
+                        }
+                    }
+                }
+                Ok(dependencies)
+            }
+            Err(error) => Err(Box::new(error)),
+        }
     }
 
     fn parse_podlock(lockfile_path: &str) -> io::Result<()> {
@@ -198,9 +254,33 @@ pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) {
         }
         ManagersArgs::YARN => {
             let dependencies = DependencyFile::parse_yarn_lock(lockfile_path);
+            match dependencies {
+                Ok(package_lock) => parsed_dependencies = package_lock,
+                Err(error) => {
+                    let mut file = File::create("output.txt");
+                    let _ = file
+                        .expect("Error with file")
+                        .write_all(format!("{:?}", error).as_ref());
+                }
+            }
+            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
             Ok(())
-        },
-        ManagersArgs::PNPM => DependencyFile::parse_pnpm_lock(lockfile_path),
+        }
+        ManagersArgs::PNPM => {
+            let dependencies = DependencyFile::parse_pnpm_lock(lockfile_path);
+            println!("File: {:?}", dependencies);
+            match dependencies {
+                Ok(package_lock) => parsed_dependencies = package_lock,
+                Err(error) => {
+                    let mut file = File::create("output.txt");
+                    let _ = file
+                        .expect("Error with file")
+                        .write_all(format!("{:?}", error).as_ref());
+                }
+            }
+            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
+            Ok(())
+        }
         ManagersArgs::IOS => DependencyFile::parse_podlock(lockfile_path),
         ManagersArgs::ANDROID => DependencyFile::parse_settings_graddle(lockfile_path),
     };
