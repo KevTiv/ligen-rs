@@ -18,25 +18,10 @@ fn main() {
 
     for lockfile in dependency_lockfiles.iter() {
         match lockfile.to_str() {
-            Some(path) => parse_lock_file(manager, &root, path),
+            Some(path) => {
+                let parsed_dependencies = parse_lock_file(manager, &root, path);
+            }
             _ => eprint!("Something went wrong"),
         };
     }
-    // for lockfilePath in &dependency_lockfiles {
-    //     let file_path = lockfilePath;
-    //
-    //     match file_path.to_str() {
-    //         Some(path) => {
-    //             parse_lock_file(manager, path)
-    //         },
-    //         None => {
-    //             panic!("Error reading: {:?}", file_path)
-    //         }
-    //     }
-    //     // println!("file : {:?}. ", file_path);
-    //
-    // }
-
-    // println!("file found: {:?}. Writing to {:?}", dependency_lockfiles, output)
-    ()
 }

@@ -47,12 +47,21 @@ struct PackageJson {
     repository: Option<Repository>,
     author: Option<String>,
     license: Option<String>,
-    license_url: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Repository {
+    url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Repository {
-    url: Option<String>,
+pub struct ParsedPackageJson {
+    name: String,
+    description: String,
+    repository_url: String,
+    author: String,
+    license: String,
+    license_url: String,
 }
 
 struct DependencyFile;
@@ -72,7 +81,7 @@ trait FileParser {
     fn get_node_module_package_info(
         node_modules_path: Vec<String>,
         root_directory: &PathBuf,
-    ) -> Vec<PackageJson>;
+    ) -> Vec<ParsedPackageJson>;
     fn read_file(file_path: &str) -> io::Result<String>;
     fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool;
     fn update_lock_file_path(
@@ -137,8 +146,8 @@ impl FileParser for DependencyFile {
     fn get_node_module_package_info(
         node_modules_path: Vec<String>,
         root_directory: &PathBuf,
-    ) -> Vec<PackageJson> {
-        let mut node_module_info: Vec<PackageJson> = Vec::new();
+    ) -> Vec<ParsedPackageJson> {
+        let mut node_module_info: Vec<ParsedPackageJson> = Vec::new();
 
         for node_module_path in node_modules_path {
             let module_path = root_directory.join(&node_module_path);
@@ -152,16 +161,20 @@ impl FileParser for DependencyFile {
                         let license_file_url =
                             get_license_file_url(&node_module_path, root_directory);
 
-                        node_module_info.push(PackageJson {
-                            name: package_json.name,
-                            description: package_json.description,
-                            repository: package_json.repository,
-                            author: package_json.author,
-                            license: package_json.license,
-                            license_url: license_file_url,
+                        node_module_info.push(ParsedPackageJson {
+                            name: package_json.name.unwrap_or("".to_string()),
+                            description: package_json.description.unwrap_or("".to_string()),
+                            repository_url: package_json
+                                .repository
+                                .unwrap()
+                                .url
+                                .unwrap_or("".to_string()),
+                            author: package_json.author.unwrap_or("".to_string()),
+                            license: package_json.license.unwrap_or("".to_string()),
+                            license_url: license_file_url.unwrap_or("".to_string()),
                         })
                     }
-                    Err(e) => eprintln!("Error parsing package.json: {}", e),
+                    Err(error) => eprintln!("Error parsing package.json: {error}"),
                 }
             } else {
                 eprintln!("Failed to read file at {:?}", package_json_path);
@@ -178,6 +191,7 @@ impl FileParser for DependencyFile {
 
         Ok(contents)
     }
+
     fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool {
         let file_path = root_directory.join(file_path);
         file_path.exists()
@@ -301,7 +315,7 @@ pub(crate) fn handle_dependencies_files(
     manager: ManagersArgs,
     root_directory: &PathBuf,
 ) -> Vec<PathBuf> {
-    let mut lockfilepaths: Vec<PathBuf> = vec![];
+    let mut lockfilepaths: Vec<PathBuf> = Vec::new();
 
     let file_path = match manager {
         ManagersArgs::NPM => "./package-lock.json".to_string(),
@@ -320,46 +334,51 @@ pub(crate) fn handle_dependencies_files(
     lockfilepaths
 }
 
-pub(crate) fn parse_lock_file(manager: ManagersArgs, root: &PathBuf, lockfile_path: &str) {
-    let mut parsed_dependencies: Vec<String> = Vec::new();
+pub(crate) fn parse_lock_file(
+    manager: ManagersArgs,
+    root: &PathBuf,
+    lockfile_path: &str,
+) -> Vec<ParsedPackageJson> {
+    let mut parsed_dependencies: Vec<ParsedPackageJson> = Vec::new();
     let _ = match manager {
         ManagersArgs::NPM => {
             let dependencies = DependencyFile::parse_package_lock(lockfile_path);
             match dependencies {
                 Ok(package_lock) => {
-                    parsed_dependencies = package_lock;
-                    let test = DependencyFile::get_node_module_package_info(
-                        parsed_dependencies.clone(),
-                        &root,
-                    );
-                    println!("did it work: {:?}", test);
+                    let found = DependencyFile::get_node_module_package_info(package_lock, &root);
+                    parsed_dependencies = found;
                 }
                 Err(error) => eprintln!("{error}"),
             }
-            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
-
-            Ok(())
         }
         ManagersArgs::YARN => {
             let dependencies = DependencyFile::parse_yarn_lock(lockfile_path);
             match dependencies {
-                Ok(package_lock) => parsed_dependencies = package_lock,
+                Ok(package_lock) => {
+                    let found = DependencyFile::get_node_module_package_info(package_lock, &root);
+                    parsed_dependencies = found;
+                }
                 Err(error) => eprintln!("{error}"),
             }
-            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
-            Ok(())
         }
         ManagersArgs::PNPM => {
             let dependencies = DependencyFile::parse_pnpm_lock(lockfile_path);
-            println!("File: {:?}", dependencies);
             match dependencies {
-                Ok(package_lock) => parsed_dependencies = package_lock,
+                Ok(package_lock) => {
+                    let found = DependencyFile::get_node_module_package_info(package_lock, &root);
+                    parsed_dependencies = found;
+                }
                 Err(error) => eprintln!("{error}"),
             }
-            write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
-            Ok(())
         }
-        ManagersArgs::IOS => DependencyFile::parse_podlock(lockfile_path),
-        ManagersArgs::ANDROID => DependencyFile::parse_settings_graddle(lockfile_path),
+        ManagersArgs::IOS => {
+            let _ = DependencyFile::parse_settings_graddle(lockfile_path);
+            ()
+        }
+        ManagersArgs::ANDROID => {
+            let _ = DependencyFile::parse_settings_graddle(lockfile_path);
+            ()
+        }
     };
+    parsed_dependencies
 }
