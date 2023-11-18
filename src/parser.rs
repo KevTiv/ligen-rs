@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io;
 use std::io::{BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_derive::{Deserialize, Serialize};
 
@@ -16,11 +16,11 @@ struct PackageLockJson {
     version: Option<String>,
     lockfile_version: Option<u32>,
     requires: Option<bool>,
-    packages: Option<HashMap<String, Package>>,
+    packages: Option<HashMap<String, PackageLockDevDependencies>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Package {
+struct PackageLockDevDependencies {
     name: Option<String>,
     version: Option<String>,
     dependencies: Option<HashMap<String, String>>,
@@ -30,7 +30,7 @@ struct Package {
 #[derive(Debug, Serialize, Deserialize)]
 struct PnpmLockFile {
     dependencies: HashMap<String, Option<PnpmLockSpecifier>>,
-    devDependencies: HashMap<String, Option<PnpmLockSpecifier>>,
+    dev_dependencies: HashMap<String, Option<PnpmLockSpecifier>>,
     packages: HashMap<String, Option<PnpmLockSpecifier>>,
 }
 
@@ -40,9 +40,25 @@ struct PnpmLockSpecifier {
     version: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PackageJson {
+    name: Option<String>,
+    description: Option<String>,
+    repository: Option<Repository>,
+    author: Option<String>,
+    license: Option<String>,
+    license_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Repository {
+    url: Option<String>,
+}
+
 struct DependencyFile;
 
 trait Parser {
+    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf);
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
     fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
@@ -63,7 +79,7 @@ trait FileParser {
     );
 }
 
-fn extract_library_name(key: &str) -> String {
+fn extract_yaml_library_name(key: &str) -> String {
     // Split the key by '/'
     let parts: Vec<&str> = key.split('/').collect();
 
@@ -85,7 +101,32 @@ fn extract_library_name(key: &str) -> String {
     }
 }
 
-pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: PathBuf) -> bool {
+fn get_license_file_url(node_module_path: &String, root_directory: &PathBuf) -> Option<String> {
+    let mut license_url: String = "".to_string();
+    let potential_license_file_paths = [
+        "LICENSE",
+        "license",
+        "license.md",
+        "LICENSE.md",
+        "license.txt",
+        "LICENSE.txt",
+    ];
+
+    potential_license_file_paths.iter().any(|&file_name| {
+        let file_path = format!("{node_module_path}/{file_name}");
+        match file_exists_in_directory(&file_path, root_directory) {
+            true => {
+                license_url = format!("{node_module_path}/{file_name}");
+                true
+            }
+            false => false,
+        }
+    });
+
+    Some(license_url)
+}
+
+pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool {
     let file_path = root_directory.join(file_path);
 
     file_path.exists()
@@ -117,6 +158,20 @@ impl FileParser for DependencyFile {
 }
 
 impl Parser for DependencyFile {
+    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf) {
+        for node_module_path in node_modules_path {
+            let license_file_url = get_license_file_url(&node_module_path, root_directory);
+            let package_json_path = Path::new(&node_module_path).join("/package.json");
+            let mut node_module_info: Vec<PackageJson>;
+
+            if let Ok(node_package_json) =
+                DependencyFile::read_file(package_json_path.to_str().unwrap())
+            {
+                let package_json: PackageJson = serde_json::from_str(&*node_package_json)
+                    .expect(&*format!("unable to open{node_package_json}"));
+            }
+        }
+    }
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let file_content = DependencyFile::read_file(lockfile_path).unwrap();
         let package_lock_json = serde_json::from_str::<PackageLockJson>(&file_content);
@@ -134,15 +189,14 @@ impl Parser for DependencyFile {
             Err(error) => Err(Box::new(error)),
         }
     }
+
     fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let yarn_lock = <DependencyFile as FileParser>::read_file(lockfile_path);
-
 
         match yarn_lock {
             Ok(yarn_lock) => {
                 let mut dependencies = Vec::new();
-
-                let mut seen = std::collections::HashSet::new();
+                let mut seen = HashSet::new();
 
                 for line in yarn_lock.lines() {
                     if let Some(colon_index) = line.find(':') {
@@ -154,22 +208,29 @@ impl Parser for DependencyFile {
                             let library_name = if trimmed_identifier.starts_with('@') {
                                 // Scoped package
                                 if let Some(slash_index) = trimmed_identifier.find('/') {
-                                    &trimmed_identifier[..trimmed_identifier[slash_index..].find('@').map_or(trimmed_identifier.len(), |idx_to_trim| slash_index + idx_to_trim)]
+                                    &trimmed_identifier[..trimmed_identifier[slash_index..]
+                                        .find('@')
+                                        .map_or(trimmed_identifier.len(), |idx_to_trim| {
+                                            slash_index + idx_to_trim
+                                        })]
                                 } else {
                                     continue; // Invalid format, skip
                                 }
                             } else {
                                 // Regular package
-                                &trimmed_identifier[..trimmed_identifier.find('@').unwrap_or(trimmed_identifier.len())]
+                                &trimmed_identifier[..trimmed_identifier
+                                    .find('@')
+                                    .unwrap_or(trimmed_identifier.len())]
                             };
 
-                            if library_name.to_string() != "" && seen.insert(library_name.to_string()) {
+                            if library_name.to_string() != ""
+                                && seen.insert(library_name.to_string())
+                            {
                                 dependencies.push(format!("node_modules/{library_name}"));
                             }
                         }
                     }
                 }
-
                 Ok(dependencies)
             }
             Err(error) => Err(Box::new(error)),
@@ -184,13 +245,14 @@ impl Parser for DependencyFile {
                 let mut dependencies = Vec::new();
                 let mut seen = std::collections::HashSet::new();
 
-                let pnpm_lock_dependencies = pnpm_lock.dependencies.keys();
-                let pnpm_lock_dev_dependencies = pnpm_lock.devDependencies.keys();
-                let pnpm_lock_packages = pnpm_lock.packages.keys();
-
-                for package in pnpm_lock_dependencies.chain(pnpm_lock_dev_dependencies).chain(pnpm_lock_packages) {
-                    if let formatted_name = extract_library_name(package) {
-                        if seen.insert(formatted_name.clone()) {
+                for package in pnpm_lock
+                    .dependencies
+                    .keys()
+                    .chain(pnpm_lock.dev_dependencies.keys())
+                    .chain(pnpm_lock.packages.keys())
+                {
+                    if let formatted_name = extract_yaml_library_name(package) {
+                        if formatted_name.len() != 0 && seen.insert(formatted_name.clone()) {
                             dependencies.push(format!("node_modules/{}", formatted_name));
                         }
                     }
@@ -214,7 +276,7 @@ impl Parser for DependencyFile {
 
 pub(crate) fn handle_dependencies_files(
     manager: ManagersArgs,
-    root_directory: PathBuf,
+    root_directory: &PathBuf,
 ) -> Vec<PathBuf> {
     let mut lockfilepaths: Vec<PathBuf> = vec![];
 
@@ -226,7 +288,7 @@ pub(crate) fn handle_dependencies_files(
         ManagersArgs::ANDROID => "./android/build.gradle".to_string(),
     };
 
-    if DependencyFile::file_exists_in_directory(&file_path, &root_directory) {
+    if DependencyFile::file_exists_in_directory(&file_path, root_directory) {
         lockfilepaths.push(PathBuf::from(format_file_path!(
             root_directory.join(file_path)
         )));
@@ -235,33 +297,30 @@ pub(crate) fn handle_dependencies_files(
     lockfilepaths
 }
 
-pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) {
+pub(crate) fn parse_lock_file(manager: ManagersArgs, root: &PathBuf, lockfile_path: &str) {
     let mut parsed_dependencies: Vec<String> = Vec::new();
     let _ = match manager {
         ManagersArgs::NPM => {
             let dependencies = DependencyFile::parse_package_lock(lockfile_path);
             match dependencies {
-                Ok(package_lock) => parsed_dependencies = package_lock,
-                Err(error) => {
-                    let mut file = File::create("output.txt");
-                    let _ = file
-                        .expect("Error with file")
-                        .write_all(format!("{:?}", error).as_ref());
+                Ok(package_lock) => {
+                    parsed_dependencies = package_lock;
+                    DependencyFile::get_node_module_package_info(
+                        parsed_dependencies.clone(),
+                        &root,
+                    );
                 }
+                Err(error) => eprintln!("{error}"),
             }
             write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
+
             Ok(())
         }
         ManagersArgs::YARN => {
             let dependencies = DependencyFile::parse_yarn_lock(lockfile_path);
             match dependencies {
                 Ok(package_lock) => parsed_dependencies = package_lock,
-                Err(error) => {
-                    let mut file = File::create("output.txt");
-                    let _ = file
-                        .expect("Error with file")
-                        .write_all(format!("{:?}", error).as_ref());
-                }
+                Err(error) => eprintln!("{error}"),
             }
             write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
             Ok(())
@@ -271,12 +330,7 @@ pub(crate) fn parse_lock_file(manager: ManagersArgs, lockfile_path: &str) {
             println!("File: {:?}", dependencies);
             match dependencies {
                 Ok(package_lock) => parsed_dependencies = package_lock,
-                Err(error) => {
-                    let mut file = File::create("output.txt");
-                    let _ = file
-                        .expect("Error with file")
-                        .write_all(format!("{:?}", error).as_ref());
-                }
+                Err(error) => eprintln!("{error}"),
             }
             write_vec_to_file(parsed_dependencies, "output.txt").expect("Failed to Write");
             Ok(())
