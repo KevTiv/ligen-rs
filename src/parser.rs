@@ -58,7 +58,6 @@ struct Repository {
 struct DependencyFile;
 
 trait Parser {
-    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf);
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
     fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
@@ -70,6 +69,7 @@ trait Parser {
 }
 
 trait FileParser {
+    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf);
     fn read_file(file_path: &str) -> io::Result<String>;
     fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool;
     fn update_lock_file_path(
@@ -133,6 +133,21 @@ pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf
 }
 
 impl FileParser for DependencyFile {
+    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf) {
+        for node_module_path in node_modules_path {
+            let license_file_url = get_license_file_url(&node_module_path, root_directory);
+            let package_json_path = Path::new(&node_module_path).join("/package.json");
+            let mut node_module_info: Vec<PackageJson>;
+
+            if let Ok(node_package_json) =
+                DependencyFile::read_file(package_json_path.to_str().unwrap())
+            {
+                let package_json: PackageJson = serde_json::from_str(&*node_package_json)
+                    .expect(&*format!("unable to open{node_package_json}"));
+            }
+        }
+    }
+
     fn read_file(file_path: &str) -> io::Result<String> {
         let file = File::open(file_path)?;
         let mut buf_reader = BufReader::new(file);
@@ -158,20 +173,6 @@ impl FileParser for DependencyFile {
 }
 
 impl Parser for DependencyFile {
-    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf) {
-        for node_module_path in node_modules_path {
-            let license_file_url = get_license_file_url(&node_module_path, root_directory);
-            let package_json_path = Path::new(&node_module_path).join("/package.json");
-            let mut node_module_info: Vec<PackageJson>;
-
-            if let Ok(node_package_json) =
-                DependencyFile::read_file(package_json_path.to_str().unwrap())
-            {
-                let package_json: PackageJson = serde_json::from_str(&*node_package_json)
-                    .expect(&*format!("unable to open{node_package_json}"));
-            }
-        }
-    }
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let file_content = DependencyFile::read_file(lockfile_path).unwrap();
         let package_lock_json = serde_json::from_str::<PackageLockJson>(&file_content);
