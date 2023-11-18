@@ -288,9 +288,11 @@ impl Parser for DependencyFile {
                     .chain(pnpm_lock.dev_dependencies.keys())
                     .chain(pnpm_lock.packages.keys())
                 {
-                    if let formatted_name = extract_yaml_library_name(package) {
-                        if formatted_name.len() != 0 && seen.insert(formatted_name.clone()) {
-                            dependencies.push(format!("node_modules/{}", formatted_name));
+                    match extract_yaml_library_name(package) {
+                        formatted_name => {
+                            if formatted_name.len() != 0 && seen.insert(formatted_name.clone()) {
+                                dependencies.push(format!("node_modules/{}", formatted_name));
+                            }
                         }
                     }
                 }
