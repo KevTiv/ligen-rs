@@ -69,7 +69,10 @@ trait Parser {
 }
 
 trait FileParser {
-    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf);
+    fn get_node_module_package_info(
+        node_modules_path: Vec<String>,
+        root_directory: &PathBuf,
+    ) -> Vec<PackageJson>;
     fn read_file(file_path: &str) -> io::Result<String>;
     fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool;
     fn update_lock_file_path(
@@ -114,13 +117,11 @@ fn get_license_file_url(node_module_path: &String, root_directory: &PathBuf) -> 
 
     potential_license_file_paths.iter().any(|&file_name| {
         let file_path = format!("{node_module_path}/{file_name}");
-        match file_exists_in_directory(&file_path, root_directory) {
-            true => {
-                license_url = format!("{node_module_path}/{file_name}");
-                true
-            }
-            false => false,
+        if file_exists_in_directory(&file_path, root_directory) {
+            license_url = format!("{node_module_path}/{file_name}");
+            return true;
         }
+        false
     });
 
     Some(license_url)
@@ -133,19 +134,40 @@ pub(crate) fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf
 }
 
 impl FileParser for DependencyFile {
-    fn get_node_module_package_info(node_modules_path: Vec<String>, root_directory: &PathBuf) {
+    fn get_node_module_package_info(
+        node_modules_path: Vec<String>,
+        root_directory: &PathBuf,
+    ) -> Vec<PackageJson> {
+        let mut node_module_info: Vec<PackageJson> = Vec::new();
+
         for node_module_path in node_modules_path {
-            let license_file_url = get_license_file_url(&node_module_path, root_directory);
-            let package_json_path = Path::new(&node_module_path).join("/package.json");
-            let mut node_module_info: Vec<PackageJson>;
+            let module_path = root_directory.join(&node_module_path);
+            let package_json_path = module_path.join("package.json");
 
             if let Ok(node_package_json) =
-                DependencyFile::read_file(package_json_path.to_str().unwrap())
+                DependencyFile::read_file(package_json_path.to_str().unwrap_or_default())
             {
-                let package_json: PackageJson = serde_json::from_str(&*node_package_json)
-                    .expect(&*format!("unable to open{node_package_json}"));
+                match serde_json::from_str::<PackageJson>(&node_package_json) {
+                    Ok(package_json) => {
+                        let license_file_url =
+                            get_license_file_url(&node_module_path, root_directory);
+
+                        node_module_info.push(PackageJson {
+                            name: package_json.name,
+                            description: package_json.description,
+                            repository: package_json.repository,
+                            author: package_json.author,
+                            license: package_json.license,
+                            license_url: license_file_url,
+                        })
+                    }
+                    Err(e) => eprintln!("Error parsing package.json: {}", e),
+                }
+            } else {
+                eprintln!("Failed to read file at {:?}", package_json_path);
             }
         }
+        node_module_info
     }
 
     fn read_file(file_path: &str) -> io::Result<String> {
@@ -306,10 +328,11 @@ pub(crate) fn parse_lock_file(manager: ManagersArgs, root: &PathBuf, lockfile_pa
             match dependencies {
                 Ok(package_lock) => {
                     parsed_dependencies = package_lock;
-                    DependencyFile::get_node_module_package_info(
+                    let test = DependencyFile::get_node_module_package_info(
                         parsed_dependencies.clone(),
                         &root,
                     );
+                    println!("did it work: {:?}", test);
                 }
                 Err(error) => eprintln!("{error}"),
             }
