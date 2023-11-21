@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io;
 use std::io::{BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_derive::{Deserialize, Serialize};
+use serde_json::Value::Object;
 
 use crate::cli::ManagersArgs;
 use crate::format_file_path;
-use crate::write::write_vec_to_file;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PackageLockJson {
@@ -166,7 +166,9 @@ impl FileParser for DependencyFile {
                             description: package_json.description.unwrap_or("".to_string()),
                             repository_url: package_json
                                 .repository
-                                .unwrap()
+                                .unwrap_or(Repository {
+                                    url: Some("".to_string()),
+                                })
                                 .url
                                 .unwrap_or("".to_string()),
                             author: package_json.author.unwrap_or("".to_string()),

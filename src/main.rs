@@ -1,6 +1,6 @@
 use crate::cli::{cli, ParsedArgs};
-use crate::parser::{handle_dependencies_files, parse_lock_file, ParsedPackageJson};
-use crate::write::write_vec_to_file;
+use crate::parser::{handle_dependencies_files, parse_lock_file};
+use crate::write::write_node_dependencies_to_file;
 use serde_json::Value;
 use std::ops::Deref;
 
@@ -36,8 +36,8 @@ fn main() {
                     })
                     .collect();
 
-                let _ = write_vec_to_file(parsed_dependencies_json, output_path.unwrap());
-                ()
+                let _ =
+                    write_node_dependencies_to_file(parsed_dependencies_json, output_path.unwrap());
             }
             _ => eprint!("Something went wrong"),
         }
