@@ -1,6 +1,7 @@
 use crate::cli::{cli, ParsedArgs};
-use crate::parser::{handle_dependencies_files, parse_lock_file};
+use crate::parser::{handle_dependencies_files, parse_lock_file, ParsedPackageJson};
 use crate::write::write_vec_to_file;
+use serde_json::Value;
 use std::ops::Deref;
 
 mod cli;
@@ -26,7 +27,16 @@ fn main() {
                 };
 
                 let parsed_dependencies = parse_lock_file(manager, &root, path);
-                let _ = write_vec_to_file(parsed_dependencies, output_path.unwrap());
+                let parsed_dependencies_json: serde_json::Map<String, Value> = parsed_dependencies
+                    .iter()
+                    .map(|pkg| {
+                        let pkg_value =
+                            serde_json::to_value(pkg).expect("Failed to serialize package");
+                        (pkg.name.clone(), pkg_value)
+                    })
+                    .collect();
+
+                let _ = write_vec_to_file(parsed_dependencies_json, output_path.unwrap());
                 ()
             }
             _ => eprint!("Something went wrong"),

@@ -56,7 +56,7 @@ struct Repository {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ParsedPackageJson {
-    name: String,
+    pub(crate) name: String,
     description: String,
     repository_url: String,
     author: String,
