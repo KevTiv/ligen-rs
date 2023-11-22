@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 use serde_derive::{Deserialize, Serialize};
-use serde_json::Value::Object;
 
 use crate::cli::ManagersArgs;
 use crate::format_file_path;
@@ -195,7 +194,7 @@ impl FileParser for DependencyFile {
     }
 
     fn file_exists_in_directory(file_path: &str, root_directory: &PathBuf) -> bool {
-        let file_path = root_directory.join(file_path);
+        let file_path = root_directory.clone().join(file_path);
         file_path.exists()
     }
 

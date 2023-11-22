@@ -2,7 +2,6 @@ use crate::cli::{cli, ParsedArgs};
 use crate::parser::{handle_dependencies_files, parse_lock_file};
 use crate::write::write_node_dependencies_to_file;
 use serde_json::Value;
-use std::ops::Deref;
 
 mod cli;
 mod macros;
@@ -15,7 +14,9 @@ fn main() {
         root,
         output,
     } = cli();
-
+    let manager = manager;
+    let root = root;
+    let output = output;
     let dependency_lockfiles = handle_dependencies_files(manager, &root);
 
     for lockfile in dependency_lockfiles.iter() {
