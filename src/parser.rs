@@ -71,7 +71,7 @@ trait Parser {
 
     fn parse_pnpm_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
-    fn parse_podlock(lockfile_path: &str) -> io::Result<()>;
+    fn parse_podlock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
 
     fn parse_settings_graddle(lockfile_path: &str) -> io::Result<()>;
 }
@@ -88,28 +88,8 @@ trait FileParser {
         lockfilepath: &str,
         root_directory: &PathBuf,
     );
-}
-
-fn extract_yaml_library_name(key: &str) -> String {
-    // Split the key by '/'
-    let parts: Vec<&str> = key.split('/').collect();
-
-    // The package name is usually the last part for non-scoped packages,
-    // or the last two parts for scoped packages.
-    match parts.as_slice() {
-        // Scoped package (e.g., "/@babel/code-frame/7.10.4")
-        [_, scope, rest, ..] if scope.starts_with('@') => {
-            let name = rest.split('@').next().unwrap_or("");
-            format!("{}/{}", scope, name)
-        }
-        // Non-scoped package (e.g., "/lodash/4.17.15")
-        [_, rest, ..] => {
-            let name = rest.split('@').next().unwrap_or("");
-            name.to_string()
-        }
-        // Other cases (e.g., malformed or unexpected format)
-        _ => String::new(),
-    }
+    fn extract_yaml_library_name(key: &str) -> String;
+    fn parse_podlock_dependency_line(line: &str) -> Option<(String, String)>;
 }
 
 fn get_license_file_url(node_module_path: &String, root_directory: &PathBuf) -> Option<String> {
@@ -207,10 +187,67 @@ impl FileParser for DependencyFile {
             lockfilepaths.push(root_directory.join(lockfilepath));
         }
     }
+
+    fn extract_yaml_library_name(key: &str) -> String {
+        // Split the key by '/'
+        let parts: Vec<&str> = key.split('/').collect();
+
+        // The package name is usually the last part for non-scoped packages,
+        // or the last two parts for scoped packages.
+        match parts.as_slice() {
+            // Scoped package (e.g., "/@babel/code-frame/7.10.4")
+            [_, scope, rest, ..] if scope.starts_with('@') => {
+                let name = rest.split('@').next().unwrap_or("");
+                format!("{}/{}", scope, name)
+            }
+            // Non-scoped package (e.g., "/lodash/4.17.15")
+            [_, rest, ..] => {
+                let name = rest.split('@').next().unwrap_or("");
+                name.to_string()
+            }
+            // Other cases (e.g., malformed or unexpected format)
+            _ => String::new(),
+        }
+    }
+
+    fn parse_podlock_dependency_line(line: &str) -> Option<(String, String)> {
+        let line = line.trim();
+        if line.is_empty() || line.chars().all(char::is_uppercase) {
+            return None;
+        }
+
+        if let Some((lib_name, _)) = line.split_once('(') {
+            let lib_name = lib_name.trim().trim_matches('-').to_string();
+
+            let path = if line.contains("~>") {
+                "./Pods".to_string()
+            } else {
+                line.split(" (from `")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim_end_matches(')')
+                    .trim()
+                    .to_string()
+            };
+
+            return Some((lib_name, path));
+        }
+
+        None
+    }
 }
 
 impl Parser for DependencyFile {
     fn parse_package_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        /// Parses a package-lock.json file and returns a list of dependencies.
+        ///
+        /// # Parameters
+        ///
+        /// * `lockfile_path` - The path to the package-lock.json file.
+        ///
+        /// # Returns
+        ///
+        /// A `Vec` of dependencies, or an error if the file could not be parsed.
         let file_content = DependencyFile::read_file(lockfile_path).unwrap();
         let package_lock_json = serde_json::from_str::<PackageLockJson>(&file_content);
 
@@ -229,6 +266,15 @@ impl Parser for DependencyFile {
     }
 
     fn parse_yarn_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        /// Parses a yarn.lock file and returns a list of dependencies.
+        ///
+        /// # Parameters
+        ///
+        /// * `lockfile_path` - The path to the yarn.lock file.
+        ///
+        /// # Returns
+        ///
+        /// A `Vec` of dependencies, or an error if the file could not be parsed.
         let yarn_lock = <DependencyFile as FileParser>::read_file(lockfile_path);
 
         match yarn_lock {
@@ -276,6 +322,15 @@ impl Parser for DependencyFile {
     }
 
     fn parse_pnpm_lock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        /// Parses a pnpm-lock.yaml file and returns a list of dependencies.
+        ///
+        /// # Parameters
+        ///
+        /// * `lockfile_path` - The path to the pnpm-lock.yaml file.
+        ///
+        /// # Returns
+        ///
+        /// A `Vec` of dependencies, or an error if the file could not be parsed.
         let pnpm_lock = <DependencyFile as FileParser>::read_file(lockfile_path);
         match pnpm_lock {
             Ok(pnpm_lock) => {
@@ -289,7 +344,7 @@ impl Parser for DependencyFile {
                     .chain(pnpm_lock.dev_dependencies.keys())
                     .chain(pnpm_lock.packages.keys())
                 {
-                    match extract_yaml_library_name(package) {
+                    match <DependencyFile as FileParser>::extract_yaml_library_name(package) {
                         formatted_name => {
                             if formatted_name.len() != 0 && seen.insert(formatted_name.clone()) {
                                 dependencies.push(format!("node_modules/{}", formatted_name));
@@ -303,9 +358,38 @@ impl Parser for DependencyFile {
         }
     }
 
-    fn parse_podlock(lockfile_path: &str) -> io::Result<()> {
-        let content = <DependencyFile as FileParser>::read_file(lockfile_path);
-        Result::from(Ok(println!("Here 4 parse_package_lock: {:?} ", content)))
+    fn parse_podlock(lockfile_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let podlock_file = <DependencyFile as FileParser>::read_file(lockfile_path);
+        let mut dependencies = Vec::new();
+        let mut parsed_dependencies = Vec::new();
+        match podlock_file {
+            Ok(podlock_file) => {
+                let mut is_dependencies_section = false;
+                for line in podlock_file.lines() {
+                    if line.trim() == "DEPENDENCIES:" {
+                        is_dependencies_section = true;
+                        continue;
+                    }
+
+                    if is_dependencies_section {
+                        if line.chars().all(|c| c.is_uppercase() || c.is_whitespace())
+                            && !line.trim().is_empty()
+                        {
+                            break; // Break if we encounter a fully capitalized word (new section)
+                        }
+
+                        if let Some((lib_name, path)) =
+                            <DependencyFile as FileParser>::parse_podlock_dependency_line(&line)
+                        {
+                            dependencies.push((lib_name, path));
+                        }
+                    }
+                }
+                println!("{:?}", dependencies)
+            }
+            _ => (),
+        }
+        return Ok(parsed_dependencies);
     }
 
     fn parse_settings_graddle(lockfile_path: &str) -> io::Result<()> {
@@ -375,7 +459,9 @@ pub(crate) fn parse_lock_file(
             }
         }
         ManagersArgs::IOS => {
-            let _ = DependencyFile::parse_settings_graddle(lockfile_path);
+            let podlock_file = DependencyFile::parse_settings_graddle(lockfile_path);
+
+            let dependencies = DependencyFile::parse_podlock(lockfile_path);
             ()
         }
         ManagersArgs::ANDROID => {
